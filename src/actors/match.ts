@@ -16,21 +16,21 @@ import {
 } from "./config.js";
 import type { Player, Food, GameSnapshot, LeaderboardEntry } from "./types.js";
 
-interface PlayerState extends Player {
+export interface PlayerState extends Player {
   connId: string;
   inputX: number;
   inputY: number;
   disconnectedAt: number | null;
 }
 
-interface State {
+export interface MatchState {
   matchId: string;
   tick: number;
   players: Record<string, PlayerState>;
   food: Record<string, Food>;
 }
 
-interface ConnState {
+export interface MatchConnState {
   playerId: string;
   name: string;
 }
@@ -75,14 +75,14 @@ export const match = actor({
     tick: 0,
     players: {} as Record<string, PlayerState>,
     food: {} as Record<string, Food>,
-  } satisfies State,
+  } satisfies MatchState,
 
   events: {
     snapshot: event<GameSnapshot>(),
     playerDied: event<{ playerId: string; killerName: string }>(),
   },
 
-  createConnState: (_c, params: { playerId: string; name: string }): ConnState => ({
+  createConnState: (_c, params: { playerId: string; name: string }): MatchConnState => ({
     playerId: params.playerId,
     name: params.name,
   }),
@@ -262,7 +262,7 @@ export const match = actor({
   },
 });
 
-function buildSnapshot(state: State): GameSnapshot {
+function buildSnapshot(state: MatchState): GameSnapshot {
   const activePlayers = Object.values(state.players)
     .filter((p) => p.disconnectedAt === null)
     .map((p) => ({

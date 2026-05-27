@@ -2,13 +2,13 @@ import { actor } from "rivetkit";
 import { CAPACITY } from "./config.js";
 import type { JoinResult } from "./types.js";
 
-interface MatchInfo {
+export interface MatchInfo {
   matchId: string;
   playerCount: number;
   createdAt: number;
 }
 
-interface State {
+export interface MatchmakerState {
   matches: Record<string, MatchInfo>;
 }
 
@@ -19,7 +19,7 @@ function generateId(): string {
 export const matchmaker = actor({
   state: {
     matches: {} as Record<string, MatchInfo>,
-  } satisfies State,
+  } satisfies MatchmakerState,
 
   actions: {
     findMatch: (c, name: string): JoinResult => {
