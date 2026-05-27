@@ -31,12 +31,12 @@ export default function Game({ client, matchId, playerId, playerName, onDeath }:
   });
 
   // Handle snapshot events
-  actor.useEvent("snapshot", (data) => {
+  actor.useEvent("snapshot", (data: GameSnapshot) => {
     setSnapshot(data);
   });
 
   // Handle death events
-  actor.useEvent("playerDied", (data) => {
+  actor.useEvent("playerDied", (data: { playerId: string; killerName: string }) => {
     if (data.playerId === playerId) {
       onDeath(data.killerName);
     }
