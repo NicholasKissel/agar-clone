@@ -31,14 +31,15 @@ export default function Game({ client, matchId, playerId, playerName, onDeath }:
   });
 
   // Handle snapshot events
-  actor.useEvent("snapshot", (data: GameSnapshot) => {
-    setSnapshot(data);
+  actor.useEvent("snapshot", (data) => {
+    setSnapshot(data as GameSnapshot);
   });
 
   // Handle death events
-  actor.useEvent("playerDied", (data: { playerId: string; killerName: string }) => {
-    if (data.playerId === playerId) {
-      onDeath(data.killerName);
+  actor.useEvent("playerDied", (data) => {
+    const { playerId: deadPlayerId, killerName } = data as { playerId: string; killerName: string };
+    if (deadPlayerId === playerId) {
+      onDeath(killerName);
     }
   });
 
