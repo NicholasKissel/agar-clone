@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "skills": {
+    "multiplayer-game": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "multiplayer-game/SKILL.md",
+      "computedHash": "6babd4c1abc4b38ca970d9f37d7c8b5bf021233758fee8480a305892f066de1e"
+    },
+    "rivetkit": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "rivetkit/SKILL.md",
+      "computedHash": "79dcbe7f52d6a042cdf8ef56b33a028efa7864265bad3e2824d975a97135656b"
+    },
+    "rivetkit-client-javascript": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "rivetkit-client-javascript/SKILL.md",
+      "computedHash": "183797fb5533919629547cd6b941d9a4e42246fa8a59dca6ac5502e3a652ec24"
+    },
+    "rivetkit-client-react": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "rivetkit-client-react/SKILL.md",
+      "computedHash": "a33815b2d874a576a81e54d4ad51acbc51f6a6c4cec29c0e25e3aeb319adee9c"
+    },
+    "rivetkit-client-swift": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "rivetkit-client-swift/SKILL.md",
+      "computedHash": "332e933727342284333a2208c501aa9de2808d510aae5ab24fcbca367a68b87c"
+    },
+    "rivetkit-client-swiftui": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "rivetkit-client-swiftui/SKILL.md",
+      "computedHash": "6f45961abfb5f6326c92211f2bc6b2c9722dddd1b733578c9f7fc79d068c0086"
+    },
+    "sandbox-agent": {
+      "source": "rivet-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sandbox-agent/SKILL.md",
+      "computedHash": "52d74874f6b15618028981bff02054e392b52e2416396dd384f48ac75d769a58"
+    }
+  }
+}
