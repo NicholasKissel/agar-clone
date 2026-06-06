@@ -1,15 +1,20 @@
-import { actor } from "rivetkit";
-import { CAPACITY } from "./config.js";
-import type { JoinResult } from "./types.js";
+// Age of War - Matchmaker Actor
+// Handles player assignment to matches for PvP and PvE modes
 
-export interface MatchInfo {
+import { actor } from "rivetkit";
+import { GameMode, Side, JoinResult } from "./types.js";
+
+export interface WaitingMatch {
   matchId: string;
-  playerCount: number;
+  leftPlayerId: string;
   createdAt: number;
 }
 
 export interface MatchmakerState {
-  matches: Record<string, MatchInfo>;
+  // For PvP: matches waiting for a second player
+  waitingMatches: Record<string, WaitingMatch>;
+  // Active match count for stats
+  activeMatches: number;
 }
 
 function generateId(): string {
@@ -18,58 +23,81 @@ function generateId(): string {
 
 export const matchmaker = actor({
   state: {
-    matches: {} as Record<string, MatchInfo>,
+    waitingMatches: {} as Record<string, WaitingMatch>,
+    activeMatches: 0,
   } satisfies MatchmakerState,
 
   actions: {
-    findMatch: (c, name: string): JoinResult => {
-      // Find an available match with space
-      let targetMatch: MatchInfo | null = null;
-
-      for (const match of Object.values(c.state.matches)) {
-        if (match.playerCount < CAPACITY) {
-          if (!targetMatch || match.playerCount > targetMatch.playerCount) {
-            // Prefer matches with more players (more fun!)
-            targetMatch = match;
-          }
-        }
-      }
-
-      // Create new match if none available
-      if (!targetMatch) {
+    findMatch: (c, gameMode: GameMode): JoinResult => {
+      if (gameMode === GameMode.PVE) {
+        // PvE: Create new match immediately with AI opponent
         const matchId = generateId();
-        targetMatch = {
+        const playerId = generateId();
+        c.state.activeMatches++;
+
+        return {
           matchId,
-          playerCount: 0,
-          createdAt: Date.now(),
+          playerId,
+          side: Side.LEFT,
+          gameMode: GameMode.PVE,
         };
-        c.state.matches[matchId] = targetMatch;
       }
 
-      // Assign player to match
+      // PvP: Look for waiting match or create new one
+      const waitingMatchIds = Object.keys(c.state.waitingMatches);
+
+      if (waitingMatchIds.length > 0) {
+        // Join existing waiting match as right player
+        const matchId = waitingMatchIds[0];
+        const playerId = generateId();
+
+        // Remove from waiting
+        delete c.state.waitingMatches[matchId];
+
+        return {
+          matchId,
+          playerId,
+          side: Side.RIGHT,
+          gameMode: GameMode.PVP,
+        };
+      }
+
+      // Create new waiting match as left player
+      const matchId = generateId();
       const playerId = generateId();
-      targetMatch.playerCount++;
+
+      c.state.waitingMatches[matchId] = {
+        matchId,
+        leftPlayerId: playerId,
+        createdAt: Date.now(),
+      };
+
+      c.state.activeMatches++;
 
       return {
-        matchId: targetMatch.matchId,
+        matchId,
         playerId,
+        side: Side.LEFT,
+        gameMode: GameMode.PVP,
       };
     },
 
-    updatePlayerCount: (c, matchId: string, delta: number) => {
-      const match = c.state.matches[matchId];
-      if (match) {
-        match.playerCount = Math.max(0, match.playerCount + delta);
-
-        // Remove empty matches after a delay
-        if (match.playerCount === 0) {
-          delete c.state.matches[matchId];
-        }
+    cancelWaiting: (c, matchId: string) => {
+      if (c.state.waitingMatches[matchId]) {
+        delete c.state.waitingMatches[matchId];
+        c.state.activeMatches = Math.max(0, c.state.activeMatches - 1);
       }
     },
 
-    getMatches: (c): MatchInfo[] => {
-      return Object.values(c.state.matches);
+    matchEnded: (c) => {
+      c.state.activeMatches = Math.max(0, c.state.activeMatches - 1);
+    },
+
+    getStats: (c) => {
+      return {
+        waitingCount: Object.keys(c.state.waitingMatches).length,
+        activeMatches: c.state.activeMatches,
+      };
     },
   },
 });

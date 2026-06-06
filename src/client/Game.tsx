@@ -1,14 +1,32 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createRivetKit } from "@rivetkit/react";
 import type { Registry } from "../actors/registry.js";
-import type { GameSnapshot, Player, LeaderboardEntry } from "../actors/types.js";
+import {
+  GameSnapshot,
+  Side,
+  GameMode,
+  UnitType,
+  TurretType,
+  Age,
+} from "../actors/types.js";
+import {
+  UNIT_CONFIGS,
+  TURRET_CONFIGS,
+  TURRET_SLOTS,
+  AGE_NAMES,
+  XP_REQUIRED,
+  EVOLUTION_COST,
+  getAvailableUnits,
+  getAvailableTurrets,
+} from "../actors/config.js";
 
 interface GameProps {
   client: ReturnType<typeof import("rivetkit/client").createClient<Registry>>;
   matchId: string;
   playerId: string;
-  playerName: string;
-  onDeath: (killerName: string) => void;
+  side: Side;
+  gameMode: GameMode;
+  onGameOver: (winningSide: Side) => void;
 }
 
 // In production, connect through our server which returns the Rivet Cloud endpoint
@@ -19,15 +37,26 @@ const endpoint = import.meta.env.DEV
 
 const { useActor } = createRivetKit<Registry>({ endpoint });
 
-export default function Game({ client, matchId, playerId, playerName, onDeath }: GameProps) {
+// Canvas dimensions
+const CANVAS_WIDTH = 1200;
+const CANVAS_HEIGHT = 500;
+
+export default function Game({
+  client,
+  matchId,
+  playerId,
+  side,
+  gameMode,
+  onGameOver,
+}: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
-  const mousePos = useRef({ x: 0, y: 0 });
+  const [selectedTurretSlot, setSelectedTurretSlot] = useState<number | null>(null);
 
   const actor = useActor({
     name: "match",
     key: [matchId],
-    params: { playerId, name: playerName },
+    params: { playerId, side, gameMode },
   });
 
   // Handle snapshot events
@@ -35,56 +64,36 @@ export default function Game({ client, matchId, playerId, playerName, onDeath }:
     setSnapshot(data as GameSnapshot);
   });
 
-  // Handle death events
-  actor.useEvent("playerDied", (data) => {
-    const { playerId: deadPlayerId, killerName } = data as { playerId: string; killerName: string };
-    if (deadPlayerId === playerId) {
-      onDeath(killerName);
-    }
+  // Handle game over events
+  actor.useEvent("gameOver", (data) => {
+    const { winningSide } = data as { winningSide: Side };
+    onGameOver(winningSide);
   });
 
-  // Mouse movement handler
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
-
-      // Calculate direction from center to mouse
-      const dx = e.clientX - rect.left - centerX;
-      const dy = e.clientY - rect.top - centerY;
-
-      // Normalize to -1 to 1
-      const maxDistance = Math.min(rect.width, rect.height) / 3;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const factor = Math.min(1, distance / maxDistance);
-
-      if (distance > 5) {
-        mousePos.current = {
-          x: (dx / distance) * factor,
-          y: (dy / distance) * factor,
-        };
-      } else {
-        mousePos.current = { x: 0, y: 0 };
-      }
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, []);
-
-  // Send input to server
-  useEffect(() => {
-    const interval = setInterval(() => {
+  // Action handlers
+  const handleSpawnUnit = useCallback(
+    (unitType: UnitType) => {
       if (actor.connection) {
-        actor.connection.setInput(mousePos.current.x, mousePos.current.y);
+        actor.connection.spawnUnit(unitType);
       }
-    }, 50);
+    },
+    [actor.connection]
+  );
 
-    return () => clearInterval(interval);
+  const handleBuildTurret = useCallback(
+    (turretType: TurretType, slotIndex: number) => {
+      if (actor.connection) {
+        actor.connection.buildTurret(turretType, slotIndex);
+        setSelectedTurretSlot(null);
+      }
+    },
+    [actor.connection]
+  );
+
+  const handleEvolve = useCallback(() => {
+    if (actor.connection) {
+      actor.connection.evolve();
+    }
   }, [actor.connection]);
 
   // Render game
@@ -96,261 +105,617 @@ export default function Game({ client, matchId, playerId, playerName, onDeath }:
     if (!ctx) return;
 
     // Set canvas size
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
 
-    // Find current player
-    const currentPlayer = snapshot.players.find((p) => p.id === playerId);
-    if (!currentPlayer) return;
-
-    // Calculate camera offset (center on player)
-    const cameraX = currentPlayer.x - canvas.width / 2;
-    const cameraY = currentPlayer.y - canvas.height / 2;
-
-    // Clear canvas
-    ctx.fillStyle = "#1a1a2e";
+    // Clear canvas with sky color
+    ctx.fillStyle = "#87CEEB";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw grid
-    ctx.strokeStyle = "#2d2d4a";
-    ctx.lineWidth = 1;
-    const gridSize = 50;
-    const startX = -cameraX % gridSize;
-    const startY = -cameraY % gridSize;
+    // Draw ground
+    ctx.fillStyle = "#8B4513";
+    ctx.fillRect(0, snapshot.groundY, canvas.width, canvas.height - snapshot.groundY);
 
-    for (let x = startX; x < canvas.width; x += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-    for (let y = startY; y < canvas.height; y += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
+    // Draw ground line
+    ctx.strokeStyle = "#5D3A1A";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, snapshot.groundY);
+    ctx.lineTo(canvas.width, snapshot.groundY);
+    ctx.stroke();
 
-    // Draw world boundary
-    ctx.strokeStyle = "#e74c3c";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(-cameraX, -cameraY, snapshot.worldSize, snapshot.worldSize);
+    // Draw bases
+    drawBase(ctx, snapshot.leftBase, snapshot.groundY, side === Side.LEFT);
+    drawBase(ctx, snapshot.rightBase, snapshot.groundY, side === Side.RIGHT);
 
-    // Draw food
-    for (const food of snapshot.food) {
-      const screenX = food.x - cameraX;
-      const screenY = food.y - cameraY;
+    // Draw turret slots (empty slots)
+    drawTurretSlots(ctx, Side.LEFT, snapshot.turrets, snapshot.groundY, selectedTurretSlot, side === Side.LEFT);
+    drawTurretSlots(ctx, Side.RIGHT, snapshot.turrets, snapshot.groundY, selectedTurretSlot, side === Side.RIGHT);
 
-      // Skip if off screen
-      if (screenX < -20 || screenX > canvas.width + 20 ||
-          screenY < -20 || screenY > canvas.height + 20) {
-        continue;
-      }
-
-      ctx.beginPath();
-      ctx.arc(screenX, screenY, 5, 0, Math.PI * 2);
-      ctx.fillStyle = food.color;
-      ctx.fill();
+    // Draw turrets
+    for (const turret of snapshot.turrets) {
+      drawTurret(ctx, turret, snapshot.groundY);
     }
 
-    // Draw players (sorted by size, smallest first)
-    const sortedPlayers = [...snapshot.players].sort((a, b) => a.radius - b.radius);
-
-    for (const player of sortedPlayers) {
-      const screenX = player.x - cameraX;
-      const screenY = player.y - cameraY;
-
-      // Skip if off screen
-      if (screenX < -player.radius * 2 || screenX > canvas.width + player.radius * 2 ||
-          screenY < -player.radius * 2 || screenY > canvas.height + player.radius * 2) {
-        continue;
-      }
-
-      // Draw cell body
-      ctx.beginPath();
-      ctx.arc(screenX, screenY, player.radius, 0, Math.PI * 2);
-      ctx.fillStyle = player.color;
-      ctx.fill();
-
-      // Draw cell border
-      ctx.strokeStyle = darkenColor(player.color, 0.3);
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Draw name
-      ctx.fillStyle = "#fff";
-      ctx.font = `bold ${Math.max(12, player.radius / 3)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(player.name, screenX, screenY);
-
-      // Draw score below name
-      ctx.font = `${Math.max(10, player.radius / 4)}px sans-serif`;
-      ctx.fillText(String(player.score), screenX, screenY + player.radius / 3 + 5);
+    // Draw units
+    for (const unit of snapshot.units) {
+      drawUnit(ctx, unit, snapshot.groundY);
     }
-  }, [snapshot, playerId]);
 
-  // Handle window resize
-  useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-      }
-    };
+    // Draw projectiles
+    for (const proj of snapshot.projectiles) {
+      drawProjectile(ctx, proj);
+    }
+  }, [snapshot, side, selectedTurretSlot]);
 
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  if (!snapshot) {
+    return (
+      <div style={styles.loading}>
+        <p>Loading battle...</p>
+      </div>
+    );
+  }
 
-  const currentPlayer = snapshot?.players.find((p) => p.id === playerId);
+  const playerState = side === Side.LEFT ? snapshot.leftPlayer : snapshot.rightPlayer;
+  const enemyState = side === Side.LEFT ? snapshot.rightPlayer : snapshot.leftPlayer;
+  const availableUnits = getAvailableUnits(playerState.currentAge);
+  const availableTurrets = getAvailableTurrets(playerState.currentAge);
+
+  const nextAge = playerState.currentAge < Age.FUTURE ? (playerState.currentAge + 1) as Age : null;
+  const xpRequired = nextAge !== null ? XP_REQUIRED[nextAge] : 0;
+  const evolveCost = nextAge !== null ? EVOLUTION_COST[nextAge] : 0;
+  const canEvolve =
+    nextAge !== null &&
+    playerState.xp >= xpRequired &&
+    playerState.gold >= evolveCost;
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      <canvas ref={canvasRef} style={{ display: "block" }} />
+    <div style={styles.gameContainer}>
+      {/* Top Bar */}
+      <div style={styles.topBar}>
+        <div style={styles.goldDisplay}>
+          <span style={styles.goldIcon}>G</span>
+          <span style={styles.goldAmount}>{playerState.gold}</span>
+        </div>
 
-      {/* Leaderboard */}
-      {snapshot && (
-        <div style={styles.leaderboard}>
-          <h3 style={styles.leaderboardTitle}>Leaderboard</h3>
-          {snapshot.leaderboard.map((entry, i) => (
-            <div
-              key={entry.id}
+        <div style={styles.ageIndicator}>
+          <span style={styles.ageName}>{AGE_NAMES[playerState.currentAge]}</span>
+          <span style={styles.ageNumber}>Age {playerState.currentAge + 1}/5</span>
+        </div>
+
+        <div style={styles.enemyInfo}>
+          <span>Enemy: {AGE_NAMES[enemyState.currentAge]}</span>
+          {enemyState.isAI && <span style={styles.aiLabel}> (AI)</span>}
+        </div>
+      </div>
+
+      {/* Canvas */}
+      <canvas ref={canvasRef} style={styles.canvas} />
+
+      {/* Bottom HUD */}
+      <div style={styles.bottomBar}>
+        {/* Unit Buttons */}
+        <div style={styles.buttonGroup}>
+          <span style={styles.groupLabel}>Units</span>
+          <div style={styles.buttonRow}>
+            {availableUnits.map((unitType) => {
+              const config = UNIT_CONFIGS[unitType];
+              const canAfford = playerState.gold >= config.cost;
+              return (
+                <button
+                  key={unitType}
+                  onClick={() => handleSpawnUnit(unitType)}
+                  disabled={!canAfford}
+                  style={{
+                    ...styles.unitButton,
+                    opacity: canAfford ? 1 : 0.5,
+                    borderColor: config.color,
+                  }}
+                >
+                  <div
+                    style={{
+                      ...styles.unitPreview,
+                      backgroundColor: config.color,
+                    }}
+                  />
+                  <span style={styles.unitName}>{config.name}</span>
+                  <span style={styles.unitCost}>{config.cost}g</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Turret Buttons */}
+        <div style={styles.buttonGroup}>
+          <span style={styles.groupLabel}>Turrets</span>
+          <div style={styles.buttonRow}>
+            {availableTurrets.map((turretType) => {
+              const config = TURRET_CONFIGS[turretType];
+              const canAfford = playerState.gold >= config.cost;
+              const occupiedSlots = snapshot.turrets
+                .filter((t) => t.side === side)
+                .map((t) => t.slotIndex);
+              const hasEmptySlot = occupiedSlots.length < TURRET_SLOTS;
+
+              return (
+                <button
+                  key={turretType}
+                  onClick={() => {
+                    if (selectedTurretSlot !== null) {
+                      handleBuildTurret(turretType, selectedTurretSlot);
+                    } else {
+                      // Find first empty slot
+                      for (let i = 0; i < TURRET_SLOTS; i++) {
+                        if (!occupiedSlots.includes(i)) {
+                          setSelectedTurretSlot(i);
+                          break;
+                        }
+                      }
+                    }
+                  }}
+                  disabled={!canAfford || !hasEmptySlot}
+                  style={{
+                    ...styles.turretButton,
+                    opacity: canAfford && hasEmptySlot ? 1 : 0.5,
+                    borderColor: config.color,
+                  }}
+                >
+                  <div
+                    style={{
+                      ...styles.turretPreview,
+                      borderBottomColor: config.color,
+                    }}
+                  />
+                  <span style={styles.unitName}>{config.name}</span>
+                  <span style={styles.unitCost}>{config.cost}g</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Evolve Button */}
+        <div style={styles.evolveSection}>
+          {nextAge !== null ? (
+            <button
+              onClick={handleEvolve}
+              disabled={!canEvolve}
               style={{
-                ...styles.leaderboardEntry,
-                fontWeight: entry.id === playerId ? "bold" : "normal",
-                color: entry.id === playerId ? "#3498db" : "#fff",
+                ...styles.evolveButton,
+                opacity: canEvolve ? 1 : 0.6,
               }}
             >
-              <span>{i + 1}. {entry.name}</span>
-              <span>{entry.score}</span>
-            </div>
-          ))}
+              <span style={styles.evolveLabel}>EVOLVE</span>
+              <span style={styles.evolveAge}>{AGE_NAMES[nextAge]}</span>
+              <div style={styles.xpBarContainer}>
+                <div
+                  style={{
+                    ...styles.xpBarFill,
+                    width: `${Math.min(100, (playerState.xp / xpRequired) * 100)}%`,
+                  }}
+                />
+              </div>
+              <span style={styles.xpText}>
+                {playerState.xp}/{xpRequired} XP
+              </span>
+              <span style={styles.evolveCost}>{evolveCost}g</span>
+            </button>
+          ) : (
+            <div style={styles.maxAgeLabel}>MAX AGE</div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Minimap */}
-      {snapshot && currentPlayer && (
-        <Minimap
-          players={snapshot.players}
-          currentPlayerId={playerId}
-          worldSize={snapshot.worldSize}
-        />
-      )}
-
-      {/* Score display */}
-      {currentPlayer && (
-        <div style={styles.scoreDisplay}>
-          Score: {currentPlayer.score}
+      {/* Turret Slot Selection Overlay */}
+      {selectedTurretSlot !== null && (
+        <div style={styles.slotOverlay}>
+          <p>Click a turret to build in slot {selectedTurretSlot + 1}</p>
+          <button onClick={() => setSelectedTurretSlot(null)} style={styles.cancelButton}>
+            Cancel
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-function Minimap({
-  players,
-  currentPlayerId,
-  worldSize,
-}: {
-  players: Player[];
-  currentPlayerId: string;
-  worldSize: number;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const size = 150;
+// ==================== DRAWING FUNCTIONS ====================
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+function drawBase(
+  ctx: CanvasRenderingContext2D,
+  base: { side: Side; hp: number; maxHp: number; x: number },
+  groundY: number,
+  isPlayer: boolean
+) {
+  const width = 80;
+  const height = 120;
+  const x = base.x - width / 2;
+  const y = groundY - height;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+  // Base body
+  ctx.fillStyle = isPlayer ? "#3498db" : "#e74c3c";
+  ctx.fillRect(x, y, width, height);
 
-    canvas.width = size;
-    canvas.height = size;
+  // Base border
+  ctx.strokeStyle = isPlayer ? "#2980b9" : "#c0392b";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, width, height);
 
-    // Background
-    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-    ctx.fillRect(0, 0, size, size);
-
-    // Border
-    ctx.strokeStyle = "#444";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(0, 0, size, size);
-
-    // Scale factor
-    const scale = size / worldSize;
-
-    // Draw players
-    for (const player of players) {
-      const x = player.x * scale;
-      const y = player.y * scale;
-      const r = Math.max(2, player.radius * scale);
-
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = player.id === currentPlayerId ? "#3498db" : player.color;
-      ctx.fill();
+  // Windows/details
+  ctx.fillStyle = isPlayer ? "#2980b9" : "#c0392b";
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 2; col++) {
+      ctx.fillRect(x + 15 + col * 35, y + 20 + row * 35, 15, 20);
     }
-  }, [players, currentPlayerId, worldSize]);
+  }
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={styles.minimap}
-    />
+  // HP bar
+  drawHPBar(ctx, x, y - 15, width, 8, base.hp, base.maxHp);
+}
+
+function drawTurretSlots(
+  ctx: CanvasRenderingContext2D,
+  baseSide: Side,
+  turrets: { side: Side; slotIndex: number }[],
+  groundY: number,
+  selectedSlot: number | null,
+  isPlayerSide: boolean
+) {
+  const baseX = baseSide === Side.LEFT ? 60 : 1140;
+  const startOffset = 100;
+  const spacing = 80;
+
+  for (let i = 0; i < TURRET_SLOTS; i++) {
+    const occupied = turrets.some((t) => t.side === baseSide && t.slotIndex === i);
+    if (occupied) continue;
+
+    const x = baseSide === Side.LEFT ? baseX + startOffset + i * spacing : baseX - startOffset - i * spacing;
+    const y = groundY - 25;
+
+    // Draw empty slot
+    ctx.strokeStyle = selectedSlot === i && isPlayerSide ? "#fff" : "#555";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(x - 20, y - 25, 40, 50);
+    ctx.setLineDash([]);
+
+    // Slot number
+    ctx.fillStyle = "#555";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${i + 1}`, x, y + 35);
+  }
+}
+
+function drawTurret(
+  ctx: CanvasRenderingContext2D,
+  turret: { type: TurretType; side: Side; x: number; y: number; hp: number; maxHp: number },
+  groundY: number
+) {
+  const config = TURRET_CONFIGS[turret.type];
+
+  // Turret base
+  ctx.fillStyle = "#444";
+  ctx.fillRect(turret.x - 15, groundY - 20, 30, 20);
+
+  // Turret body (triangle pointing toward enemy)
+  ctx.fillStyle = config.color;
+  ctx.beginPath();
+  if (turret.side === Side.LEFT) {
+    ctx.moveTo(turret.x + 20, turret.y);
+    ctx.lineTo(turret.x - 10, turret.y - 15);
+    ctx.lineTo(turret.x - 10, turret.y + 15);
+  } else {
+    ctx.moveTo(turret.x - 20, turret.y);
+    ctx.lineTo(turret.x + 10, turret.y - 15);
+    ctx.lineTo(turret.x + 10, turret.y + 15);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // HP bar
+  drawHPBar(ctx, turret.x - 15, turret.y - 30, 30, 4, turret.hp, turret.maxHp);
+}
+
+function drawUnit(
+  ctx: CanvasRenderingContext2D,
+  unit: { type: UnitType; side: Side; x: number; y: number; hp: number; maxHp: number },
+  groundY: number
+) {
+  const config = UNIT_CONFIGS[unit.type];
+  const isLeft = unit.side === Side.LEFT;
+
+  ctx.save();
+  ctx.translate(unit.x, groundY);
+
+  // Flip for right-side units
+  if (!isLeft) {
+    ctx.scale(-1, 1);
+  }
+
+  // Draw unit body based on config
+  ctx.fillStyle = config.color;
+
+  // Body rectangle
+  ctx.fillRect(-config.width / 2, -config.height, config.width, config.height);
+
+  // Head circle
+  ctx.beginPath();
+  ctx.arc(0, -config.height - 8, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Weapon indicator for ranged
+  if (config.isRanged) {
+    ctx.fillStyle = "#333";
+    ctx.fillRect(config.width / 2, -config.height / 2 - 3, 15, 6);
+  }
+
+  ctx.restore();
+
+  // HP bar (don't flip)
+  drawHPBar(
+    ctx,
+    unit.x - config.width / 2,
+    groundY - config.height - 25,
+    config.width,
+    3,
+    unit.hp,
+    unit.maxHp
   );
 }
 
-function darkenColor(color: string, amount: number): string {
-  const hex = color.replace("#", "");
-  const r = Math.max(0, parseInt(hex.slice(0, 2), 16) * (1 - amount));
-  const g = Math.max(0, parseInt(hex.slice(2, 4), 16) * (1 - amount));
-  const b = Math.max(0, parseInt(hex.slice(4, 6), 16) * (1 - amount));
-  return `rgb(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)})`;
+function drawProjectile(
+  ctx: CanvasRenderingContext2D,
+  proj: { x: number; y: number; side: Side }
+) {
+  ctx.fillStyle = proj.side === Side.LEFT ? "#FFD700" : "#FF6B6B";
+  ctx.beginPath();
+  ctx.arc(proj.x, proj.y, 4, 0, Math.PI * 2);
+  ctx.fill();
 }
 
+function drawHPBar(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  hp: number,
+  maxHp: number
+) {
+  const ratio = hp / maxHp;
+
+  // Background
+  ctx.fillStyle = "#333";
+  ctx.fillRect(x, y, width, height);
+
+  // HP fill
+  ctx.fillStyle = ratio > 0.5 ? "#2ecc71" : ratio > 0.25 ? "#f39c12" : "#e74c3c";
+  ctx.fillRect(x, y, width * ratio, height);
+
+  // Border
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, height);
+}
+
+// ==================== STYLES ====================
+
 const styles: Record<string, React.CSSProperties> = {
-  leaderboard: {
-    position: "absolute",
-    top: "20px",
-    right: "20px",
-    background: "rgba(0, 0, 0, 0.7)",
-    padding: "16px",
-    borderRadius: "8px",
-    minWidth: "180px",
-  },
-  leaderboardTitle: {
-    color: "#fff",
-    margin: "0 0 12px 0",
-    fontSize: "18px",
-    borderBottom: "1px solid #444",
-    paddingBottom: "8px",
-  },
-  leaderboardEntry: {
+  gameContainer: {
+    width: "100%",
+    height: "100%",
     display: "flex",
-    justifyContent: "space-between",
-    color: "#fff",
-    fontSize: "14px",
-    padding: "4px 0",
+    flexDirection: "column",
+    alignItems: "center",
+    backgroundColor: "#1a1a2e",
+    padding: "10px",
+    boxSizing: "border-box",
   },
-  minimap: {
-    position: "absolute",
-    bottom: "20px",
-    right: "20px",
-    borderRadius: "4px",
-  },
-  scoreDisplay: {
-    position: "absolute",
-    top: "20px",
-    left: "20px",
-    background: "rgba(0, 0, 0, 0.7)",
-    padding: "12px 20px",
-    borderRadius: "8px",
+  loading: {
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     color: "#fff",
     fontSize: "24px",
+  },
+  topBar: {
+    width: CANVAS_WIDTH,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 20px",
+    backgroundColor: "rgba(0,0,0,0.7)",
+    borderRadius: "8px 8px 0 0",
+  },
+  goldDisplay: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#ffd700",
+    fontSize: "24px",
     fontWeight: "bold",
+  },
+  goldIcon: {
+    fontSize: "28px",
+  },
+  goldAmount: {
+    minWidth: "60px",
+  },
+  ageIndicator: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    color: "#fff",
+  },
+  ageName: {
+    fontSize: "20px",
+    fontWeight: "bold",
+  },
+  ageNumber: {
+    fontSize: "12px",
+    color: "#888",
+  },
+  enemyInfo: {
+    color: "#888",
+    fontSize: "14px",
+  },
+  aiLabel: {
+    color: "#e74c3c",
+  },
+  canvas: {
+    border: "4px solid #333",
+  },
+  bottomBar: {
+    width: CANVAS_WIDTH,
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-end",
+    gap: "30px",
+    padding: "15px 20px",
+    backgroundColor: "rgba(0,0,0,0.7)",
+    borderRadius: "0 0 8px 8px",
+  },
+  buttonGroup: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "8px",
+  },
+  groupLabel: {
+    color: "#888",
+    fontSize: "12px",
+    textTransform: "uppercase",
+  },
+  buttonRow: {
+    display: "flex",
+    gap: "8px",
+  },
+  unitButton: {
+    width: "70px",
+    height: "80px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    backgroundColor: "#16213e",
+    border: "2px solid #555",
+    borderRadius: "8px",
+    cursor: "pointer",
+    color: "#fff",
+    padding: "4px",
+  },
+  unitPreview: {
+    width: "20px",
+    height: "25px",
+    borderRadius: "2px",
+  },
+  unitName: {
+    fontSize: "10px",
+    textAlign: "center",
+  },
+  unitCost: {
+    fontSize: "11px",
+    color: "#ffd700",
+  },
+  turretButton: {
+    width: "70px",
+    height: "80px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    backgroundColor: "#16213e",
+    border: "2px solid #555",
+    borderRadius: "8px",
+    cursor: "pointer",
+    color: "#fff",
+    padding: "4px",
+  },
+  turretPreview: {
+    width: 0,
+    height: 0,
+    borderLeft: "10px solid transparent",
+    borderRight: "10px solid transparent",
+    borderBottom: "20px solid #888",
+  },
+  evolveSection: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+  },
+  evolveButton: {
+    width: "120px",
+    height: "90px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
+    backgroundColor: "#2d1f4e",
+    border: "2px solid #9b59b6",
+    borderRadius: "12px",
+    cursor: "pointer",
+    color: "#fff",
+    padding: "8px",
+  },
+  evolveLabel: {
+    fontSize: "12px",
+    fontWeight: "bold",
+    color: "#9b59b6",
+  },
+  evolveAge: {
+    fontSize: "14px",
+    fontWeight: "bold",
+  },
+  xpBarContainer: {
+    width: "100px",
+    height: "6px",
+    backgroundColor: "#333",
+    borderRadius: "3px",
+    overflow: "hidden",
+  },
+  xpBarFill: {
+    height: "100%",
+    backgroundColor: "#9b59b6",
+    transition: "width 0.3s",
+  },
+  xpText: {
+    fontSize: "10px",
+    color: "#888",
+  },
+  evolveCost: {
+    fontSize: "11px",
+    color: "#ffd700",
+  },
+  maxAgeLabel: {
+    fontSize: "14px",
+    color: "#9b59b6",
+    fontWeight: "bold",
+  },
+  slotOverlay: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    backgroundColor: "rgba(0,0,0,0.9)",
+    padding: "20px 30px",
+    borderRadius: "8px",
+    textAlign: "center",
+    color: "#fff",
+  },
+  cancelButton: {
+    marginTop: "10px",
+    padding: "8px 16px",
+    backgroundColor: "#e74c3c",
+    border: "none",
+    borderRadius: "4px",
+    color: "#fff",
+    cursor: "pointer",
   },
 };
