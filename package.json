@@ -2,6 +2,7 @@
   "name": "agar-clone",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch src/server.ts",
@@ -11,11 +12,19 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
-    "@rivetkit/react": "^2.3.0-rc.5",
+    "@rivetkit/engine-cli": "file:/tmp/rivetkit-fixed/rivetkit-engine-cli",
+    "@rivetkit/engine-envoy-protocol": "file:/tmp/rivetkit-fixed/rivetkit-engine-envoy-protocol",
+    "@rivetkit/framework-base": "file:/tmp/rivetkit-fixed/rivetkit-framework-base",
+    "@rivetkit/react": "file:/tmp/rivetkit-fixed/rivetkit-react",
+    "@rivetkit/rivetkit-napi": "file:/tmp/rivetkit-fixed/rivetkit-rivetkit-napi",
+    "@rivetkit/rivetkit-wasm": "file:/tmp/rivetkit-fixed/rivetkit-rivetkit-wasm",
+    "@rivetkit/traces": "file:/tmp/rivetkit-fixed/rivetkit-traces",
+    "@rivetkit/virtual-websocket": "file:/tmp/rivetkit-fixed/rivetkit-virtual-websocket",
+    "@rivetkit/workflow-engine": "file:/tmp/rivetkit-fixed/rivetkit-workflow-engine",
     "hono": "^4.7.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "rivetkit": "^2.3.0-rc.5"
+    "rivetkit": "file:/tmp/rivetkit-fixed/rivetkit"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
